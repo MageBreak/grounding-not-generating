@@ -1,0 +1,23 @@
+# The AMI corpus is fetched, never committed.
+# ~22 MB of someone else's data does not belong in this history.
+data/
+*.zip
+
+# Experiment output
+findings.txt
+experiment*.txt
+recon*.txt
+*.out
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
