@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grounding Pipeline</title>
+<style>
+  :root{
+    --bg:#ffffff; --ink:#1A1D21; --mute:#5A6472; --panel:#F4F6F8; --rule:#D5DAE0;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#14171A; --ink:#E6E9EC; --mute:#9AA4B0; --panel:#1C2024; --rule:#2E343A;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#14171A; --ink:#E6E9EC; --mute:#9AA4B0; --panel:#1C2024; --rule:#2E343A;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+    padding:32px 16px;
+  }
+  figure{max-width:1480px; margin:0 auto}
+  svg{width:100%; max-width:100%; height:auto; display:block}
+  figcaption{
+    margin-top:20px; color:var(--mute); font-size:14px; line-height:1.6;
+    border-top:1px solid var(--rule); padding-top:16px;
+  }
+  figcaption strong{color:var(--ink); font-weight:600}
+</style>
+</head>
+<body>
+<figure>
+<svg viewBox="0 0 1480 760" role="img"
+     aria-label="The grounding pipeline: a language model appears at exactly two stages, extraction and audit, and deterministic code surrounds both. Quotes that cannot be located are dropped and counted as fabrication; audit may only remove claims; gate violations become questions rather than guesses; and gold labels sit behind a wall that only the scorer crosses.">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+    <marker id="arG" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3E8E63"/>
+    </marker>
+  </defs>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, sans-serif"
+     fill="currentColor">
+
+  <!-- ============ legend ============ -->
+  <g>
+    <rect x="1150" y="16" width="316" height="118" rx="6"
+          fill="none" stroke="currentColor" stroke-opacity=".25"/>
+    <rect x="1166" y="34" width="22" height="12" rx="2" fill="#C2663A" fill-opacity=".30" stroke="#C2663A"/>
+    <text x="1198" y="44" font-size="12">language model — generates</text>
+    <rect x="1166" y="58" width="22" height="12" rx="2" fill="#3B82C4" fill-opacity=".20" stroke="#3B82C4"/>
+    <text x="1198" y="68" font-size="12">deterministic Python — decides</text>
+    <line x1="1166" y1="88" x2="1188" y2="88" stroke="#3E8E63" stroke-width="2" stroke-dasharray="5 3"/>
+    <text x="1198" y="92" font-size="12">refusal / evidence-search loop</text>
+    <line x1="1166" y1="112" x2="1188" y2="112" stroke="#C4504A" stroke-width="2" stroke-dasharray="5 3"/>
+    <text x="1198" y="116" font-size="12">gold-label wall</text>
+  </g>
+
+  <!-- ============ corpus prep ============ -->
+  <rect x="14" y="24" width="280" height="46" rx="6"
+        fill="currentColor" fill-opacity=".05" stroke="currentColor" stroke-opacity=".35"/>
+  <text x="154" y="44" font-size="13" font-weight="600" text-anchor="middle">Raw sources</text>
+  <text x="154" y="61" font-size="11" text-anchor="middle" fill-opacity=".7">AMI XML · PEP threads · mailing lists</text>
+
+  <line x1="154" y1="70" x2="154" y2="96" stroke="currentColor" marker-end="url(#ar)"/>
+
+  <rect x="14" y="98" width="280" height="48" rx="6"
+        fill="currentColor" fill-opacity=".05" stroke="currentColor" stroke-opacity=".35"/>
+  <text x="154" y="118" font-size="13" font-weight="600" text-anchor="middle">corpus.jsonl</text>
+  <text x="154" y="135" font-size="11" text-anchor="middle" fill-opacity=".7">text[start:end] == exact_text, asserted</text>
+
+  <!-- bus into stages 1 and 3 -->
+  <path d="M154,146 L154,176 M104,176 L528,176" fill="none" stroke="currentColor" stroke-opacity=".6"/>
+  <line x1="104" y1="176" x2="104" y2="198" stroke="currentColor" stroke-opacity=".6" marker-end="url(#ar)"/>
+  <line x1="528" y1="176" x2="528" y2="198" stroke="currentColor" stroke-opacity=".6" marker-end="url(#ar)"/>
+  <text x="340" y="170" font-size="11" text-anchor="middle" fill-opacity=".65">one text, used to retrieve and to resolve</text>
+
+  <!-- ============ the spine ============ -->
+  <!-- 1 RETRIEVE -->
+  <rect x="14" y="200" width="180" height="112" rx="6" fill="#3B82C4" fill-opacity=".14" stroke="#3B82C4"/>
+  <text x="104" y="230" font-size="13" font-weight="700" text-anchor="middle">1 · RETRIEVE</text>
+  <text x="104" y="254" font-size="11" text-anchor="middle" fill-opacity=".8">pick candidate passages</text>
+  <text x="104" y="272" font-size="11" text-anchor="middle" fill-opacity=".8">whole trial, or BM25</text>
+  <text x="104" y="290" font-size="11" text-anchor="middle" fill-opacity=".8">+ dense retrieval</text>
+
+  <!-- 2 EXTRACT -->
+  <rect x="226" y="200" width="180" height="112" rx="6" fill="#C2663A" fill-opacity=".20" stroke="#C2663A"/>
+  <text x="316" y="230" font-size="13" font-weight="700" text-anchor="middle">2 · EXTRACT</text>
+  <text x="316" y="254" font-size="11" text-anchor="middle" fill-opacity=".8">JSON schema forces a</text>
+  <text x="316" y="272" font-size="11" text-anchor="middle" fill-opacity=".8">verbatim quote per claim</text>
+  <text x="316" y="290" font-size="11" text-anchor="middle" fill-opacity=".8">and a refusals array</text>
+
+  <!-- 3 LOCATE -->
+  <rect x="438" y="200" width="180" height="112" rx="6" fill="#3B82C4" fill-opacity=".14" stroke="#3B82C4"/>
+  <text x="528" y="230" font-size="13" font-weight="700" text-anchor="middle">3 · LOCATE</text>
+  <text x="528" y="254" font-size="11" text-anchor="middle" fill-opacity=".8">quote → span, or nothing</text>
+  <text x="528" y="272" font-size="11" text-anchor="middle" fill-opacity=".8">the system finds it;</text>
+  <text x="528" y="290" font-size="11" text-anchor="middle" fill-opacity=".8">the model only claims it</text>
+
+  <!-- 4 BUILD -->
+  <rect x="650" y="200" width="180" height="112" rx="6" fill="#3B82C4" fill-opacity=".14" stroke="#3B82C4"/>
+  <text x="740" y="230" font-size="13" font-weight="700" text-anchor="middle">4 · BUILD</text>
+  <text x="740" y="254" font-size="11" text-anchor="middle" fill-opacity=".8">typed nodes + KG edges</text>
+  <text x="740" y="272" font-size="11" text-anchor="middle" fill-opacity=".8">no add() without</text>
+  <text x="740" y="290" font-size="11" text-anchor="middle" fill-opacity=".8">provenance</text>
+
+  <!-- 5 VALIDATE -->
+  <rect x="862" y="200" width="180" height="112" rx="6" fill="#3B82C4" fill-opacity=".14" stroke="#3B82C4"/>
+  <text x="952" y="230" font-size="13" font-weight="700" text-anchor="middle">5 · VALIDATE</text>
+  <text x="952" y="254" font-size="11" text-anchor="middle" fill-opacity=".8">gates · ontology · paths</text>
+  <text x="952" y="272" font-size="11" text-anchor="middle" fill-opacity=".8">missing · impossible ·</text>
+  <text x="952" y="290" font-size="11" text-anchor="middle" fill-opacity=".8">self-contradictory</text>
+
+  <!-- 6 AUDIT -->
+  <rect x="1074" y="200" width="180" height="112" rx="6" fill="#C2663A" fill-opacity=".20" stroke="#C2663A"/>
+  <text x="1164" y="230" font-size="13" font-weight="700" text-anchor="middle">6 · AUDIT</text>
+  <text x="1164" y="254" font-size="11" text-anchor="middle" fill-opacity=".8">sees the span and the</text>
+  <text x="1164" y="272" font-size="11" text-anchor="middle" fill-opacity=".8">claim — nothing else.</text>
+  <text x="1164" y="290" font-size="11" text-anchor="middle" fill-opacity=".8">A different model.</text>
+
+  <!-- 7 ESCALATE -->
+  <rect x="1286" y="200" width="180" height="112" rx="6" fill="#3B82C4" fill-opacity=".14" stroke="#3B82C4"/>
+  <text x="1376" y="230" font-size="13" font-weight="700" text-anchor="middle">7 · ESCALATE</text>
+  <text x="1376" y="254" font-size="11" text-anchor="middle" fill-opacity=".8">violation → question</text>
+  <text x="1376" y="272" font-size="11" text-anchor="middle" fill-opacity=".8">never a null,</text>
+  <text x="1376" y="290" font-size="11" text-anchor="middle" fill-opacity=".8">never a guess</text>
+
+  <!-- spine arrows -->
+  <g stroke="currentColor" stroke-opacity=".75">
+    <line x1="194"  y1="256" x2="224"  y2="256" marker-end="url(#ar)"/>
+    <line x1="406"  y1="256" x2="436"  y2="256" marker-end="url(#ar)"/>
+    <line x1="618"  y1="256" x2="648"  y2="256" marker-end="url(#ar)"/>
+    <line x1="830"  y1="256" x2="860"  y2="256" marker-end="url(#ar)"/>
+    <line x1="1042" y1="256" x2="1072" y2="256" marker-end="url(#ar)"/>
+    <line x1="1254" y1="256" x2="1284" y2="256" marker-end="url(#ar)"/>
+  </g>
+
+  <!-- audit removals re-run the gates -->
+  <path d="M1164,200 L1164,186 L952,186 L952,198" fill="none"
+        stroke="currentColor" stroke-opacity=".55" marker-end="url(#ar)"/>
+  <text x="1058" y="180" font-size="11" text-anchor="middle" fill-opacity=".65">a removal re-runs the gates</text>
+
+  <!-- ============ what falls out ============ -->
+  <line x1="528" y1="312" x2="528" y2="342" stroke="#C4504A" marker-end="url(#ar)" color="#C4504A"/>
+  <rect x="438" y="344" width="180" height="58" rx="6" fill="#C4504A" fill-opacity=".12" stroke="#C4504A"/>
+  <text x="528" y="367" font-size="12" font-weight="600" text-anchor="middle">quote not found</text>
+  <text x="528" y="386" font-size="11" text-anchor="middle" fill-opacity=".8">dropped, and counted</text>
+
+  <line x1="1164" y1="312" x2="1164" y2="342" stroke="#C4504A" marker-end="url(#ar)" color="#C4504A"/>
+  <rect x="1074" y="344" width="180" height="58" rx="6" fill="#C4504A" fill-opacity=".12" stroke="#C4504A"/>
+  <text x="1164" y="367" font-size="12" font-weight="600" text-anchor="middle">span doesn't support it</text>
+  <text x="1164" y="386" font-size="11" text-anchor="middle" fill-opacity=".8">removed — audit only subtracts</text>
+
+  <!-- ============ the C1 loop ============ -->
+  <path d="M1320,312 L1320,448 L104,448 L104,314" fill="none"
+        stroke="#3E8E63" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arG)"/>
+  <text x="712" y="440" font-size="12" text-anchor="middle" fill="#3E8E63" font-weight="600">
+    C1 — go looking for the missing evidence, bounded: N attempts, then C2
+  </text>
+
+  <!-- ============ output ============ -->
+  <line x1="1420" y1="312" x2="1420" y2="518" stroke="currentColor" stroke-opacity=".75" marker-end="url(#ar)"/>
+  <rect x="1200" y="520" width="266" height="70" rx="6"
+        fill="currentColor" fill-opacity=".05" stroke="currentColor" stroke-opacity=".45"/>
+  <text x="1333" y="543" font-size="13" font-weight="700" text-anchor="middle">OUTPUT</text>
+  <text x="1333" y="562" font-size="11" text-anchor="middle" fill-opacity=".8">validated model + KG, every edge cited</text>
+  <text x="1333" y="579" font-size="11" text-anchor="middle" fill-opacity=".8">+ the open questions it refused to answer</text>
+
+  <!-- run store note -->
+  <rect x="14" y="520" width="300" height="70" rx="6"
+        fill="currentColor" fill-opacity=".05" stroke="currentColor" stroke-opacity=".45"/>
+  <text x="164" y="543" font-size="13" font-weight="700" text-anchor="middle">RUN STORE</text>
+  <text x="164" y="562" font-size="11" text-anchor="middle" fill-opacity=".8">every call and verdict appended as JSONL</text>
+  <text x="164" y="579" font-size="11" text-anchor="middle" fill-opacity=".8">resumable · outside the app process tree</text>
+  <text x="380" y="549" font-size="11" fill-opacity=".6">every stage writes here —</text>
+  <text x="380" y="566" font-size="11" fill-opacity=".6">a six-hour run must survive a crash</text>
+
+  <!-- ============ the wall ============ -->
+  <line x1="14" y1="640" x2="1466" y2="640" stroke="#C4504A" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="300" y="632" font-size="12" font-weight="600" fill="#C4504A">
+    the gold-label wall — nothing above this line may read below it
+  </text>
+
+  <path d="M1333,590 L1333,616 L915,616 L915,670" fill="none"
+        stroke="currentColor" stroke-opacity=".75" marker-end="url(#ar)"/>
+  <text x="1040" y="610" font-size="11" text-anchor="middle" fill-opacity=".65">the model under test, going down to be scored</text>
+
+  <rect x="560" y="672" width="220" height="56" rx="6" fill="#C4504A" fill-opacity=".12" stroke="#C4504A"/>
+  <text x="670" y="694" font-size="12" font-weight="600" text-anchor="middle">~/gold/roles.json</text>
+  <text x="670" y="713" font-size="11" text-anchor="middle" fill-opacity=".8">outside the workspace</text>
+
+  <line x1="780" y1="700" x2="828" y2="700" stroke="currentColor" stroke-opacity=".75" marker-end="url(#ar)"/>
+
+  <rect x="830" y="672" width="170" height="56" rx="6"
+        fill="currentColor" fill-opacity=".05" stroke="currentColor" stroke-opacity=".45"/>
+  <text x="915" y="694" font-size="12" font-weight="600" text-anchor="middle">score.py</text>
+  <text x="915" y="713" font-size="11" text-anchor="middle" fill-opacity=".8">the only reader of gold</text>
+
+  <line x1="1000" y1="700" x2="1048" y2="700" stroke="currentColor" stroke-opacity=".75" marker-end="url(#ar)"/>
+
+  <rect x="1050" y="672" width="300" height="56" rx="6"
+        fill="currentColor" fill-opacity=".05" stroke="currentColor" stroke-opacity=".45"/>
+  <text x="1200" y="694" font-size="12" font-weight="600" text-anchor="middle">precision · coverage · fabrication rate</text>
+  <text x="1200" y="713" font-size="11" text-anchor="middle" fill-opacity=".8">as a curve over evidence availability</text>
+
+  </g>
+</svg>
+
+<figcaption>
+  <strong>Grounding, Not Generating — the full pipeline.</strong>
+  A language model appears at exactly two stages. At <strong>2 · EXTRACT</strong> it
+  generates, under a schema that forces a verbatim quote for every claim. At
+  <strong>6 · AUDIT</strong> a different model judges a single span against a single
+  claim, with the document withheld. Everything between and after them is
+  deterministic Python that can overrule both: a quote that will not locate is
+  dropped and counted, an unsupported claim is removed, and a gate violation
+  becomes a question rather than a guess.
+</figcaption>
+</figure>
+</body>
+</html>
