@@ -36,8 +36,8 @@ loaded = {}
 for mid in MEETINGS:
     try:
         loaded[mid] = ami.load_meeting(mid, ROOT)
-    except FileNotFoundError:
-        pass
+    except FileNotFoundError as e:
+        print(f"  skip {mid}: {e}")
 if not loaded:
     sys.exit(f"no meetings loaded for {TRIAL} -- check the path")
 
@@ -133,15 +133,20 @@ for spk, doc in sorted(first.docs.items()):
         print(f"       \"{u.text[:88]}\"")
     else:
         print(f"  {spk} -> UNGROUNDED  (no self-stated role in this meeting)")
+# This script is a diagnostic, so it may look at gold -- but only through the
+# scorer-side door, and only after the extraction above has finished.
+gold_roles = ami.load_roles(MEETINGS[0])
 print(f"\n  extracted from text : {extracted}")
-print(f"  gold metadata       : {dict(sorted(first.roles.items()))}")
-agree = [s for s in extracted if extracted[s] == first.roles.get(s)]
+print(f"  gold metadata       : {dict(sorted(gold_roles.items()))}")
+agree = [s for s in extracted if extracted[s] == gold_roles.get(s)]
 print(f"  agreement           : {len(agree)}/{len(extracted)}")
 
 # ---------------------------------------------------------------- 6
 rule("6. THE ENTITY-RESOLUTION TRAP")
 import xml.etree.ElementTree as ET
-mp = os.path.join(ROOT, "corpusResources", "meetings.xml")
+mp = ami.GOLD_PATH
+if not os.path.exists(mp):
+    sys.exit(f"gold labels not found at {mp} -- set GOLD_PATH")
 rows = {}
 for meet in ET.parse(mp).getroot():
     obs = meet.attrib.get("observation", "")

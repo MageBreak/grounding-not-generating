@@ -49,6 +49,11 @@ class Call:
     sample: int = 0                 # nth draw of an otherwise identical cell
     num_ctx: int = 32768            # MUST exceed the input. See guard below.
     max_tokens: int = 2048
+    # Reasoning mode on a thinking-capable model. None = provider default,
+    # which is NOT good enough for an experiment: whether the model reasons
+    # before answering is a condition, and an uncontrolled condition is a
+    # confound. The runner always sets this explicitly.
+    think: bool | None = None
 
     def key(self) -> str:
         """Cache key. Everything that can change the answer is in here."""
@@ -67,6 +72,10 @@ class Response:
     error: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # "stop" = the model finished. "length" = it was cut off at max_tokens,
+    # which produces truncated JSON. A truncated generation is a harness
+    # failure, not a fabrication, and the two must never be pooled.
+    done_reason: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     def parsed(self) -> Any:
@@ -140,19 +149,31 @@ class OllamaBackend:
         }
         if call.schema:
             body["format"] = call.schema
+        if call.think is not None:
+            body["think"] = call.think
 
-        req = urllib.request.Request(
-            f"{self.host}/api/chat",
-            data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json"},
-        )
         t0 = time.time()
-        try:
-            with urllib.request.urlopen(req, timeout=600) as r:
-                raw = json.loads(r.read())
-        except Exception as e:                                  # noqa: BLE001
-            return Response(call.key(), self.name, "", False,
-                            time.time() - t0, error=f"{type(e).__name__}: {e}")
+        raw = None
+        for attempt in (1, 2):
+            req = urllib.request.Request(
+                f"{self.host}/api/chat",
+                data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=900) as r:
+                    raw = json.loads(r.read())
+                break
+            except Exception as e:                              # noqa: BLE001
+                msg = f"{type(e).__name__}: {e}"
+                # Models without reasoning support reject the field outright.
+                # Drop it once and retry, so a mixed-model sweep does not die
+                # on its first non-thinking model.
+                if attempt == 1 and "think" in body and "think" in msg.lower():
+                    body.pop("think")
+                    continue
+                return Response(call.key(), self.name, "", False,
+                                time.time() - t0, error=msg)
 
         return Response(
             call_key=call.key(),
@@ -162,6 +183,7 @@ class OllamaBackend:
             latency_s=time.time() - t0,
             prompt_tokens=raw.get("prompt_eval_count"),
             completion_tokens=raw.get("eval_count"),
+            done_reason=raw.get("done_reason"),
             raw={k: v for k, v in raw.items() if k != "message"},
         )
 

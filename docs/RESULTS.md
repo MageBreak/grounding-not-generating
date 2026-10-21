@@ -1,112 +1,216 @@
-# Fabrication experiment — results
+# Results
 
-INT450 SD-1. Run 21 Sep 2026 over all 34 AMI scenario trials (kickoff meeting
-of each), 136 speaker-role assertions. `src/prototype.py`.
+Everything here is a **prototype / baseline** result on the AMI Meeting Corpus.
+AMI is a controlled environment for proving mechanisms, not the deployment
+case. Read `CORPUS_NOTES.md` for what it does and does not give us.
 
-## Setup
+---
 
-Two extractors, same text, same task: name each speaker's role.
+## The task
 
-- **Grounded** — asserts a role only where a speaker states it about
-  themselves in a citable sentence-level span. Where the evidence is absent it
-  emits an `OpenQuestion` instead of a guess.
-- **Naive** — always returns a complete answer. Where evidence is missing it
-  falls back on the scenario prior (PM/ME/UI/ID by speaker order). This is what
-  a language model does under gate pressure.
+For each of 34 AMI scenario trials, show a model the kickoff meeting and ask
+who holds which of four roles (PM / ME / UI / ID), demanding a verbatim quote
+and the document it came from for every answer.
 
-Scored against `corpusResources/meetings.xml`. **Neither extractor reads it.**
-Only the scorer does. If that wall leaks, the fabrication rate measures nothing.
+Trials are labelled by **how much evidence actually exists**, computed from the
+transcript by the regex baseline's own extractor and never from gold:
 
-## Headline
+| tier | meaning | trials |
+|---|---|---:|
+| `full` | all four roles stated aloud | 7 |
+| `partial` | one to three stated | 19 |
+| `none` | no role stated by anyone | 8 |
 
-|  | asserted | correct | precision | coverage |
-|---|---|---|---|---|
-| **Grounded** | 67 | 65 | **0.970** | 0.493 |
-| **Naive** | 136 | 83 | **0.610** | 1.000 |
+This gradient occurs naturally in AMI. We did not construct it.
 
-**Fabrication rate = 69/136 = 0.507.**
-Of those 69 unevidenced claims, **51 were wrong — 73.9%**.
+## The conditions
 
-The naive extractor is better on every structural measure. Complete, confident,
-all five gates green, no nulls. It is wrong 39% of the time, and nothing in the
-output distinguishes the 61% it got right from the 39% it invented.
+The output schema is identical in all three — one slot per speaker, each with
+`role`, `doc_id`, `quote`, where `role` may be `not_stated`. Only the
+instruction changes, so the instruction is the only variable.
 
-The grounded extractor answers half as often and is right 97% of the time when
-it does. It says "I don't know" 69 times.
+| condition | instruction |
+|---|---|
+| `p0_complete` | answer for every speaker; do not leave anyone unassigned |
+| `p1_cite` | give the quote that states it; copy exactly |
+| `p2_cite_or_refuse` | as `p1`, and `not_stated` is a correct answer |
 
-**That the invented answers are wrong 73.9% of the time is the finding.** The
-common intuition is that a model filling a gap makes a *plausible* guess that is
-often roughly right. It does not. It is wrong nearly three times in four, and
-the wrong answer is structurally indistinguishable from the right one.
+## Runs
 
-## Iteration — what the errors taught us
+| file | model | temp | draws | cells |
+|---|---|---:|---:|---:|
+| `runs/primary.jsonl` | qwen3:14b | 0.0 | 1 | 102 |
+| `runs/variance.jsonl` | qwen3:14b | 0.7 | 5 | 510 |
 
-First run: precision 0.915, six errors. Categorised:
+Zero failed calls in either. Reasoning mode off and recorded as a condition.
 
-| Error | Class | Fixable? |
-|---|---|---|
-| IS1009a C — "my role is industrial designer … technical-functional designs" read as UI | pattern-list ordering bug | yes |
-| IS1000a D — "You are the marketing guy? … So you are the marketing" | second-person attribution | yes |
-| ES2009a A — 333-char span | loose window | yes |
-| TS3011a A — 759-char span from offset 633 | loose window | yes |
-| TS3012a A — 195-char span from offset 6397 | loose window | yes |
-| IS1003a D — "trends … converged to the User" | **semantic** | no |
+---
 
-Three changes, each traceable to a specific error:
+## 1. Fabrication: 0.023, not 0.120
 
-1. **Cite the sentence, not the utterance**, capped at 240 characters. Refuse
-   rather than cite loosely.
-2. **Earliest role mention in the text wins**, not first in the pattern list.
-3. **Reject second person** — `you're`, `you are`, `your role`, `he's`, `she's`.
+An assertion whose quote cannot be found in the document it was attributed to
+looked like fabrication. Inspecting ES2012 showed that most of it is not.
 
-Second run: precision **0.970**, coverage 0.493 (down from 0.522), same 65
-correct answers from 4 fewer assertions. Coverage fell *by design* — the span
-cap makes the extractor refuse cases it previously guessed at.
+Same model, same trial, different instruction:
 
-## The two survivors
+```
+p0_complete : "Right welcome to the first meeting of Real Reaction's development meetings…"
+p1_cite     : "Right w welcome to the the first meeting of uh Real Reaction's uh um development meetings…"
+transcript  : "Right w welcome to the the first meeting of uh Real Reaction's uh um development meetings…"
+```
 
-Both are tight, first-person, single-sentence spans. Both wrong. Neither is
-fixable by pattern discipline.
+Under `p0` the model silently cleaned the transcription — dropped a false
+start, a stutter, two fillers. Under `p1`, which forbids tidying, it
+reproduced every disfluency and the quote located exactly. **It had found the
+right passage both times.**
 
-**IS1003a speaker D** — extracted UI, gold ME:
+`src/relocate.py` re-examines failed matches after normalising inline markup
+(`<disfmarker>`, `<other>`), filler (`uh`, `um`, `mm`) and immediate
+repetitions, then falls back to a sequence match at ratio ≥ 0.70.
 
-> *"Yeah, I'm just go I'm trying to give you some trends about what should be
-> done and what the users would like to have and then thi this would converged
-> to the User [Interface]"*
+| run | failed exact | recovered | genuinely absent | apparent FAB | **true FAB** |
+|---|---:|---:|---:|---:|---:|
+| primary | 35 | 27 (77%) | 8 | 0.110 | **0.025** |
+| variance | 189 | 153 (81%) | 36 | 0.120 | **0.023** |
 
-D is the Marketing Expert describing marketing work ("trends") being handed
-*to* the UI designer. The span contains `I'm` and contains `User Interface`.
-String containment passes. The span does not support the claim.
+True fabrication by tier (variance run):
 
-**TS3012a speaker A** — extracted ME, gold PM:
+| condition | full | partial | none |
+|---|---:|---:|---:|
+| `p0_complete` | 0.000 | 0.039 | 0.000 |
+| `p1_cite` | 0.000 | 0.047 | 0.019 |
+| `p2_cite_or_refuse` | **0.000** | **0.000** | **0.000** |
 
-> *"Marketing &lt;gap&gt; I'm not sure what you what you came up with yet."*
+Two things fall out:
 
-A is the Project Manager *addressing* the Marketing Expert. 64 characters,
-first person, no second-person marker to filter on.
+- **Zero genuine fabrication wherever the evidence exists**, under every
+  condition, in both runs.
+- **Zero genuine fabrication under `p2` in every tier.** Permitting refusal
+  removes invention entirely.
+- What remains concentrates in `partial` — the tier where *some* evidence
+  exists, which is precisely where filling the gap is tempting.
 
-Both require knowing **who the role term refers to**, not whether it is
-present. That is semantics, and it is precisely what validation layer 2 exists
-for — a second pass showing a fresh model only the span and the claim, with no
-access to the rest of the document, asking support / not-support.
+A recovered quote is still not a pass. The model did not copy what it was
+asked to copy, and a citation that cannot be verified byte for byte is worth
+less than one that can. But it is not invention, and the two must not share a
+number.
 
-## What to say on the 24th
+---
 
-The first run had six errors. Four were our own sloppiness and we fixed them.
-Two were not, and those two define the architecture: structural gates cannot
-catch a correct-looking citation that does not support its claim. That is why
-grounding validation is a separate layer and not a substring check.
+## 2. Where evidence exists, a string search is a perfect filter
 
-A result that reports its own residual failure mode is more credible than a
-clean number, and it pre-empts the obvious question — *what catches the cases
-your gates can't see?*
+`gprec` is precision among assertions whose quote resolved.
 
-## Caveats
+| condition | tier | asserted | located | prec | **gprec** |
+|---|---|---:|---:|---:|---:|
+| `p0_complete` | full | 28 | 26 | 0.929 | **1.000** |
+| `p1_cite` | full | 28 | 25 | 0.893 | **1.000** |
+| `p2_cite_or_refuse` | full | 15 | 13 | 0.867 | **1.000** |
 
-- Role extraction is **one** slice of the schema. It is the one with gold
-  labels for all 34 trials, which is why the experiment runs here.
-- The naive baseline's prior (PM/ME/UI/ID by speaker order) is a stand-in for
-  a language model's scenario knowledge. A real LLM baseline would be a
-  stronger control and is the obvious next step.
-- Coverage of 0.493 is not a target. Roughly half of AMI's kickoffs simply do
-  not contain self-stated roles; the honest ceiling is set by the corpus.
+Over 170 assertions across both runs, in the `full` tier, **a located quote
+has never once been attached to a wrong answer.** No gold labels, no model
+judgement — a string search separates right from wrong without error.
+
+## 3. Where evidence is absent, the same filter catches nothing
+
+| condition | tier | prec | gprec | FAB (exact) |
+|---|---|---:|---:|---:|
+| `p0_complete` | none | 0.375 | 0.414 | 0.094 |
+| `p1_cite` | none | 0.438 | 0.483 | 0.094 |
+
+In the `none` tier the quote test passes on ~90% of assertions while ~60% of
+them are wrong. The model does not invent text; it reaches for real nearby
+text and attaches it to a guess. One example, located and verified and
+supporting nothing:
+
+```
+claim: speaker B is the project manager
+quote: "Okay."            (occurs dozens of times in the document)
+```
+
+**This is the empirical case for the isolated audit stage**, and it is a
+measurement rather than an argument. `locate()` is necessary and not
+sufficient, and its blind spot sits exactly in the tier that matters.
+
+`gprec` degrades monotonically with evidence availability:
+
+```
+full 1.000  →  partial 0.787  →  none 0.436        (p0_complete, variance)
+```
+
+## 4. Permission to refuse works, and it costs
+
+| condition | tier | prec | cov |
+|---|---|---:|---:|
+| `p0_complete` | partial | 0.692 | 1.000 |
+| `p2_cite_or_refuse` | partial | **1.000** | 0.355 |
+| `p0_complete` | none | 0.357 | 1.000 |
+| `p2_cite_or_refuse` | none | 0.667 | **0.094** |
+| `p2_cite_or_refuse` | full | 0.933 | **0.536** |
+
+On `partial`, permitting refusal takes precision to **1.000** — never wrong
+when it answers. On `none`, coverage falls to **0.094**: it declines almost
+everything where nothing is stated, which is the behaviour the brief asks for.
+
+**The cost is the `full` row.** Coverage 0.536 means it refuses about half the
+time when the answer is stated plainly in front of it. That is over-refusal,
+and it belongs in the results as prominently as the fabrication rate. A system
+that will not answer a question the transcript plainly answers is not safe; it
+is useless.
+
+## 5. Asking for a citation without permitting refusal is the worst setting
+
+`p1_cite` keeps coverage at 1.000 and raises apparent fabrication to 0.145 on
+`partial` — higher than `p0_complete`. Demanding a citation while forbidding
+refusal makes the model manufacture citations. Refusal is not a nice-to-have
+that sits beside grounding; it is what makes grounding possible.
+
+## 6. The speaker-letter trap, in model output
+
+30 quotes (variance) were real text located in a **different document** than
+the one claimed. That is the same failure as `ES2002d.C` vs `ES2002c.C` — a
+speaker label treated as a stable identity — now appearing in model output
+rather than in our own schema. Counted separately as `misplaced`.
+
+---
+
+## Comparison to the regex baseline
+
+`prototype.py`, same task, no model:
+
+| extractor | precision | coverage | fabrication |
+|---|---:|---:|---:|
+| grounded (cites or refuses) | 0.970 | 0.493 | — |
+| naive (always answers) | 0.610 | 1.000 | 0.507 |
+
+The hand-written grounded extractor and `p2_cite_or_refuse` land in the same
+region of the precision/coverage plane, from opposite directions. The naive
+baseline's 0.507 was a *simulation* of fabrication via a hardcoded prior; the
+real model's true fabrication rate is 0.023. **The simulation overstated the
+problem by roughly 20×** — which is worth saying plainly, because we published
+that number first.
+
+---
+
+## Reproduce
+
+```bash
+bash scripts/fetch_ami.sh
+mkdir -p ~/gold && mv data/ami/corpusResources/meetings.xml ~/gold/
+
+ollama pull qwen3:14b
+python3 src/runner.py --samples 1 --out runs/primary.jsonl
+python3 src/score.py runs/primary.jsonl
+python3 src/relocate.py runs/primary.jsonl
+```
+
+## What these numbers are not
+
+- **One model.** qwen3:14b only. "Models fabricate at rate X" needs more than
+  one family; this says "qwen3:14b fabricates at rate X on this task".
+- **One corpus.** Four-person scripted role-play, not scattered business
+  material.
+- **One task.** A single field with four possible values, not a typed model
+  with relationships between entities.
+- **Not yet audited.** Stage 6 exists (`src/audit.py`) but has not been run at
+  scale. Until it has, the `none`-tier hole is measured and not closed.

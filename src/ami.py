@@ -24,6 +24,12 @@ NITE = "{http://nite.sourceforge.net/}"
 ROOT = os.environ.get("AMI_ROOT", os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "ami"))
 
+# Gold labels live OUTSIDE the corpus tree, on purpose. No AMI_ROOT path can
+# reach them, so no amount of browsing data/ -- by a person or an agent --
+# stumbles into the answers. Only the scorer may read this.
+GOLD_PATH = os.environ.get(
+    "GOLD_PATH", os.path.join(os.path.expanduser("~"), "gold", "meetings.xml"))
+
 HREF_RE = re.compile(r"^([^#]+)#id\(([^)]+)\)(?:\.\.id\(([^)]+)\))?$")
 
 
@@ -218,7 +224,7 @@ def load_dialogue_acts(path: str, doc: Document, speaker: str,
 @dataclass
 class Meeting:
     meeting_id: str
-    roles: dict[str, str]                    # speaker -> PM/ME/UI/ID  (GOLD, not evidence)
+    roles: dict[str, str]                    # always {} -- see load_roles()
     docs: dict[str, Document]
     utterances: list[Utterance]
     acts: dict[str, DialogueAct]
@@ -227,11 +233,20 @@ class Meeting:
     summlinks: list[tuple[str, str]]            # (sentence_id, act_id)
 
 
-def load_roles(root_dir: str, meeting_id: str) -> dict[str, str]:
-    """GOLD LABELS from corpusResources/meetings.xml. The pipeline must never
-    read this -- only the evaluator may."""
-    p = os.path.join(root_dir, "corpusResources", "meetings.xml")
-    for m in ET.parse(p).getroot():
+def load_roles(meeting_id: str, gold_path: str = GOLD_PATH) -> dict[str, str]:
+    """GOLD LABELS. The scorer may call this. Nothing else may.
+
+    This used to be called from load_meeting(), which quietly put the answer
+    key on every Meeting object the extractors were handed. Nothing read it,
+    so the published numbers stand -- but the separation was a comment rather
+    than a property, and one careless line would have ended it. It now reads
+    from GOLD_PATH, outside the corpus, and no loader calls it.
+    """
+    if not os.path.exists(gold_path):
+        raise FileNotFoundError(
+            f"gold labels not found at {gold_path}. They are deliberately kept "
+            f"outside the corpus; set GOLD_PATH or place meetings.xml there.")
+    for m in ET.parse(gold_path).getroot():
         if m.attrib.get("observation") == meeting_id:
             return {s.attrib["nxt_agent"]: s.attrib["role"] for s in m
                     if "nxt_agent" in s.attrib}
@@ -295,7 +310,9 @@ def load_meeting(meeting_id: str, root_dir: str = ROOT) -> Meeting:
     utts.sort(key=lambda u: (u.start if u.start is not None else 1e9))
     sections, sentences = load_summary(root_dir, meeting_id)
     return Meeting(
-        meeting_id=meeting_id, roles=load_roles(root_dir, meeting_id), docs=docs,
+        # roles stays empty. A Meeting is evidence; the role mapping is the
+        # answer key, and the extraction path never holds both.
+        meeting_id=meeting_id, roles={}, docs=docs,
         utterances=utts, acts=acts, summary=sections, sentences=sentences,
         summlinks=load_summlinks(root_dir, meeting_id),
     )

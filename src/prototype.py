@@ -122,9 +122,21 @@ def extract_naive(meeting, grounded: dict) -> dict:
     return out
 
 
-def load_gold(root: str) -> dict[str, dict[str, str]]:
-    """GOLD LABELS. Scorer only -- never the extractors."""
-    p = os.path.join(root, "corpusResources", "meetings.xml")
+def load_gold(root: str | None = None) -> dict[str, dict[str, str]]:
+    """GOLD LABELS. Scorer only -- never the extractors.
+
+    `root` is ignored and kept only so existing call sites still work: gold is
+    read from GOLD_PATH, outside the corpus tree, so that no AMI_ROOT path can
+    reach it. That is the whole point -- if a trial where nobody states a role
+    could be answered from this file, the fabrication rate would measure
+    nothing.
+    """
+    p = os.environ.get(
+        "GOLD_PATH", os.path.join(os.path.expanduser("~"), "gold", "meetings.xml"))
+    if not os.path.exists(p):
+        raise SystemExit(
+            f"gold labels not found at {p}\n"
+            f"  mkdir -p ~/gold && mv <meetings.xml> ~/gold/   (or set GOLD_PATH)")
     out = {}
     for m in ET.parse(p).getroot():
         obs = m.attrib.get("observation", "")

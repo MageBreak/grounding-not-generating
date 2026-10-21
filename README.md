@@ -1,9 +1,9 @@
-# Grounding, Not Generating — AMI prototype
+# Grounding, Not Generating
 
-Prototype mechanisms for an AI-assisted system-design pipeline that turns
-unstructured business input into a structured product model **where every node
-resolves to a specific passage in the source corpus**, and which refuses rather
-than inventing when the evidence is not there.
+Mechanisms for an AI-assisted system-design pipeline that turns unstructured
+business input into a structured product model **where every node and every
+relationship resolves to a specific passage in the source**, and which refuses
+rather than inventing when the evidence is not there.
 
 > **Reason over evidence. Never invent evidence.**
 >
@@ -15,166 +15,169 @@ Bhuvan Mahesh · Aishwarya G · Mukundh M · mentor: Abhishek Pathak, Cisely.ai
 
 ---
 
-## What this repository is — and is not
+## Headline findings
 
-**It is** a set of verified primitives, exercised against the AMI Meeting
-Corpus as a controlled environment: citation resolution, a deterministic
-validator, and a fabrication-pressure experiment.
+Measured on the AMI Meeting Corpus with **qwen3:14b run locally**, 34 scenario
+trials, three instruction conditions, in a deterministic run and a 5-draw
+sampled run that agree within a couple of points. Full tables and caveats in
+[`docs/RESULTS.md`](docs/RESULTS.md).
 
-**It is not** the full pipeline. There is no LLM in this code. Extraction here
-is pattern matching, used deliberately as a baseline. The multi-agent
-extraction, the evidence-search loop and the grounding audit are designed and
-not yet implemented.
+**1 — Where the evidence exists, a string search is a perfect filter.**
+In trials where all four roles are stated aloud, precision among assertions
+whose quote resolved is **1.000** — across all three conditions and both runs,
+170+ assertions without an exception. No gold labels and no model judgement
+involved.
 
-Every number below is a **prototype / baseline** result. Read `docs/RESULTS.md`
-before quoting any of it.
+**2 — Where the evidence is absent, the same filter catches nothing.**
+In trials where no role is stated, the quote test passes on ~90% of assertions
+while ~60% of them are wrong. The model does not invent text; it reaches for
+real nearby text and attaches it to a guess. `"Okay."` is a verified citation
+and supports nothing. This is the measured case for an isolated audit stage.
+
+**3 — True fabrication is 0.023, not the 0.120 it first appeared to be.**
+81% of quotes that failed exact matching turned out to be the *right passage
+with the disfluencies tidied away* — `uh`, `um`, `the the`, `<disfmarker>`.
+Under the condition that forbids tidying, the same model reproduced them
+verbatim. Invention and normalisation are different failures and must not
+share a number.
+
+**4 — Permission to refuse removes invention entirely, and costs coverage.**
+Under `cite-or-refuse`, true fabrication is **0.000 in every tier**, precision
+on partial-evidence trials is **1.000**, and coverage where nothing is stated
+falls to 0.094. The price: it also refuses **half the time when the answer is
+stated plainly**. Over-refusal is reported as prominently as fabrication.
+
+**5 — Demanding a citation while forbidding refusal is the worst setting.**
+It keeps coverage at 1.000 and raises fabrication above the no-instruction
+baseline. Refusal is not an optional extra beside grounding; it is what makes
+grounding possible.
 
 ---
 
-## Results
+## The pipeline
 
-Across 34 AMI scenario trials, 136 speaker-role assertions, scored against gold
-labels that neither extractor is permitted to read:
+A language model appears at exactly two stages. Everything between and after
+them is deterministic Python that can overrule it.
+See [`docs/pipeline.html`](docs/pipeline.html) for the diagram.
 
-| Extractor | Asserted | Correct | Precision | Coverage |
-|---|---:|---:|---:|---:|
-| **Grounded** — cites or refuses | 67 | 65 | **0.970** | 0.493 |
-| **Naive** — always answers | 136 | 83 | **0.610** | 1.000 |
+| stage | what it does |
+|---|---|
+| 1 · retrieve | select candidate passages *(designed, not yet built)* |
+| **2 · extract** | **model call** — schema forces a verbatim quote per claim |
+| 3 · locate | quote → span, or nothing. A quote that cannot be found was not read |
+| 4 · build | typed nodes and KG edges, provenance mandatory |
+| 5 · validate | gates, ontology, path equations — no model involved |
+| **6 · audit** | **model call** — a *different* model sees one span and one claim |
+| 7 · escalate | violation → question. Never a null, never a guess |
 
-**Fabrication rate = 69/136 = 0.507.** Of those 69 unevidenced claims, **51
-were wrong — 73.9%**.
-
-Separately, the citation resolver walks all 761 human-annotated citations in the
-ES2002 trial down to exact character spans with **zero broken chains**.
-
-The naive extractor is better on every structural measure — complete, confident,
-all five gates green. It is wrong 39% of the time, and nothing in its output
-separates the 61% it got right from the 39% it invented.
-
----
-
-## Quick start
-
-Python 3.11+. **No third-party dependencies** — standard library only.
-
-```bash
-git clone https://github.com/<you>/grounding-not-generating.git
-cd grounding-not-generating
-
-# fetch the AMI annotations (~22 MB, not redistributed here)
-bash scripts/fetch_ami.sh          # Windows: powershell scripts/fetch_ami.ps1
-
-python src/run.py                  # corpus tour + findings
-python src/schema.py               # validator self-test
-python src/prototype.py            # the fabrication experiment
-```
-
-Each script takes an optional path to the unzipped annotations; by default they
-look in `data/ami/`.
+Cross-cutting: every call and verdict is appended as JSONL, so a long run is
+resumable; gold labels sit outside the repository and only the scorer reads
+them.
 
 ---
 
 ## Layout
 
 ```
-src/ami.py          resolve AMI's NITE stand-off XML into offset-addressable documents
-src/schema.py       the node types, the gates, and escalation — as executable code
-src/prototype.py    grounded vs naive extraction, scored against gold labels
-src/run.py          a guided tour of the corpus that reproduces every finding
-docs/               corpus notes, the schema contract, the experiment record
-data/               the AMI corpus (git-ignored — fetched, never committed)
+src/ami.py          AMI's NITE stand-off XML -> offset-addressable documents
+src/schema.py       node types, the eight gates, escalation -- executable
+src/ontology.py     UFO stereotypes; the gates, derived rather than listed
+src/kg.py           edges with mandatory provenance + path-equation gates
+src/kge.py          embeddings, constrained to suggesting and never asserting
+src/llm.py          backend shim (Ollama / Gemini) + locate()
+src/runner.py       the sweep: stages 1-7, resumable, never reads gold
+src/audit.py        stage 6 -- isolated verifier, can only subtract
+src/score.py        the only program that opens the answer key
+src/relocate.py     separates paraphrase from fabrication
+src/prototype.py    the regex baseline, kept for comparison
+src/run.py          guided corpus tour
+scripts/status.py   what is present on this machine and what has been run
+docs/               corpus notes, schema, results, local-model setup, datasets
+runs/               experiment output (JSONL)
+data/               the AMI corpus (git-ignored -- fetched, never committed)
 ```
 
-### `ami.py` — the resolver
+Every module runs standalone as its own self-test:
 
-AMI uses NITE stand-off annotation: text lives in `words/`, and every other
-layer points at ranges of it by word id. Nothing is readable until the pointers
-resolve. This module renders each speaker's words into one string **while
-recording every token's character offset in the same pass**, so text and offsets
-cannot drift, then resolves segments, dialogue acts and gold citations against it.
-
-The contract is one line, and it is asserted:
-
-```python
-corpus[doc_id][start:end] == exact_text
+```bash
+python3 src/llm.py        # locate() against fabricated and misplaced quotes
+python3 src/ontology.py   # which gates fall out of which stereotype
+python3 src/kg.py         # a graph where every node is perfect and the graph is not
+python3 src/kge.py        # the scale check that refuses to overclaim
 ```
 
-A citation that does not round-trip is not a weak citation. It is a bug, and the
-node is rejected.
+---
 
-### `schema.py` — the validator
+## Quick start
 
-Node types, the extracted/derived field split, and the gates as **deterministic
-Python over the graph**. No prompts, no model call, nothing that asks an LLM
-whether its own output was acceptable.
+Python 3.11+, standard library only. Ollama for local inference —
+see [`docs/LOCAL_MODEL.md`](docs/LOCAL_MODEL.md), especially the section on
+Ollama's default context window, which **truncates silently** and would turn a
+harness bug into what looks like a grounding failure.
 
-The five gates are the brief's. Three more came out of failures we found in the
-data — see `docs/SCHEMA.md`. `escalate()` turns each violation into an
-`OpenQuestion` rather than a null or a guess.
+```bash
+git clone https://github.com/MageBreak/grounding-not-generating.git
+cd grounding-not-generating
 
-Run it directly for a self-test on a real failure case from ES2002.
+bash scripts/fetch_ami.sh                       # ~22 MB, not redistributed here
+mkdir -p ~/gold && mv data/ami/corpusResources/meetings.xml ~/gold/
 
-### `prototype.py` — the experiment
+python3 scripts/status.py                       # verify the machine
 
-Two extractors over the same text, same task. The grounded one asserts a role
-only where a speaker states it about themselves in a citable sentence-level
-span. The naive one always answers, falling back on the scenario prior where
-evidence is missing — standing in for a language model's world knowledge.
-
-The output ends with the grounded extractor's **own** residual errors, printed
-with their spans. Those are left in deliberately: they are the test set for the
-grounding-verification layer, and they are the clearest demonstration that
-string containment is not support.
+ollama pull qwen3:14b
+python3 src/runner.py --samples 1 --out runs/primary.jsonl
+python3 src/score.py  runs/primary.jsonl
+python3 src/relocate.py runs/primary.jsonl
+```
 
 ---
 
 ## The gold-label wall
 
-`corpusResources/meetings.xml` carries the authoritative speaker→role mapping
-and a `global_name` per participant. **This is gold labels, not evidence** —
-nobody said it in a meeting; the organisers recorded it.
+`corpusResources/meetings.xml` carries the authoritative speaker→role mapping.
+**It is gold labels, not evidence** — nobody said it in a meeting; the
+organisers recorded it.
 
-The extractors never read it. Only the scorer does. If that mapping leaks into
-extraction, a trial where no role is stated anywhere stops being a fabrication
-test — the system already knows the answer, and the fabrication rate measures
-nothing.
+It lives at `~/gold/meetings.xml`, outside the repository, so no `AMI_ROOT`
+path can reach it and nothing browsing `data/` can stumble into it. Only
+`score.py` opens it. `runner.py` and `audit.py` contain no reference to it, and
+that is asserted rather than assumed.
 
-The separation is kept by `load_gold()` living in the scorer, not in `ami.py`'s
-extraction path. If you extend this code, keep it that way.
+This was not always true. `ami.load_meeting()` used to call `load_roles()`,
+putting the answer key on every `Meeting` object handed to the extractors.
+Nothing read it, so the published numbers stand — but the separation was a
+comment rather than a property, and one careless line would have ended it.
+Moving the file out is what exposed it.
+
+---
+
+## What this is not
+
+There is no retrieval layer, no multi-agent extraction, and the audit stage
+exists but has not been run at scale. The measurements cover **one model, one
+corpus, one task** — a single field with four possible values, not a typed
+model with relationships between entities. `docs/RESULTS.md` lists the limits
+before anyone quotes a number.
+
+## What comes next
+
+1. Run the audit at scale and report `catch` / `falsecut`
+2. A second and third model family — the cross-model claim needs them
+3. Relationship-level extraction, where provenance has to cover edges
+4. Move off AMI to a corpus with structural provenance
+   (see [`docs/DATASETS.md`](docs/DATASETS.md))
 
 ---
 
 ## Data and licensing
 
-The AMI Meeting Corpus is **not included in this repository**. `scripts/fetch_ami.sh`
-downloads it from the University of Edinburgh at run time into `data/`, which is
-git-ignored.
-
-AMI is distributed under CC-BY-4.0. If you use it, cite:
+The AMI Meeting Corpus is **not included here**. `scripts/fetch_ami.sh`
+downloads it from the University of Edinburgh at run time into `data/`, which
+is git-ignored. AMI is CC-BY-4.0; `runs/*.jsonl` contains short verbatim
+excerpts under that licence. Cite:
 
 > Carletta, J. et al. (2005). *The AMI Meeting Corpus: A Pre-Announcement.*
 > Machine Learning for Multimodal Interaction.
 
 Corpus home: https://groups.inf.ed.ac.uk/ami/corpus/
-
-The code in this repository is MIT licensed — see `LICENSE`.
-
----
-
-## What comes next
-
-AMI is a controlled environment for proving out mechanisms, not the target
-problem. The deployment case is genuinely unstructured material — evidence
-scattered across documents, stakeholders mentioned once in passing, implicit
-relationships, contradictions, and requirements that change.
-
-Planned, in order:
-
-1. Evidence and retrieval layer over an unstructured corpus
-2. Model-driven extraction with verifiable quoting (`locate`)
-3. Grounding verification — an isolated pass that sees only the span and the claim
-4. The full evidence-search and human-question loop
-5. Evaluation: fabrication rate, grounding fidelity, question quality, gap
-   detection, expert edit distance
-
-`docs/CORPUS_NOTES.md` records what AMI gives us and what it does not.
+Code is MIT licensed — see `LICENSE`.
